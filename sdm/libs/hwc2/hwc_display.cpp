@@ -507,6 +507,7 @@ void HWCDisplay::BuildLayerStack() {
       layer_stack_.flags.skip_present = true;
     }
 
+
     if (hwc_layer->GetClientRequestedCompositionType() == HWC2::Composition::Cursor) {
       // Currently we support only one HWCursor & only at top most z-order
       if ((*layer_set_.rbegin())->GetId() == hwc_layer->GetId()) {
