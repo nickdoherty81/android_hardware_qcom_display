@@ -988,10 +988,11 @@ HWC2::Error HWCDisplay::AcceptDisplayChanges() {
   for (const auto& change : layer_changes_) {
     auto hwc_layer = layer_map_[change.first];
     auto composition = change.second;
-    if (hwc_layer != nullptr) {
-      hwc_layer->UpdateClientCompositionType(composition);
+
+    if (hwc_layer == nullptr) {
+      DLOGI("Null layer in HWCDisplay::AcceptDisplayChanges.");
     } else {
-      DLOGW("Invalid layer: %" PRIu64, change.first);
+      hwc_layer->UpdateClientCompositionType(composition);
     }
   }
   return HWC2::Error::None;
