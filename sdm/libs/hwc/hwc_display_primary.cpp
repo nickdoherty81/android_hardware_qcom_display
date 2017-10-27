@@ -34,6 +34,7 @@
 #include <stdarg.h>
 #include <sys/mman.h>
 
+#include <gr.h>
 #include "hwc_display_primary.h"
 #include "hwc_debugger.h"
 
@@ -99,8 +100,24 @@ int HWCDisplayPrimary::Init() {
     use_metadata_refresh_rate_ = false;
   }
 
-  return HWCDisplay::Init();
+  int status = HWCDisplay::Init();
+  if (status) {
+    return status;
+  }
+  color_mode_ = new HWCColorMode(display_intf_);
+  color_mode_->Init();
+
+  return status;
 }
+
+int HWCDisplayPrimary::Deinit() {
+  color_mode_->DeInit();
+  delete color_mode_;
+  color_mode_ = NULL;
+
+  return HWCDisplay::Deinit();
+}
+
 
 void HWCDisplayPrimary::ProcessBootAnimCompleted(hwc_display_contents_1_t *list) {
   uint32_t numBootUpLayers = 0;
@@ -175,7 +192,9 @@ int HWCDisplayPrimary::Prepare(hwc_display_contents_1_t *content_list) {
   }
 
   uint32_t refresh_rate = GetOptimalRefreshRate(one_updating_layer);
-  if (current_refresh_rate_ != refresh_rate) {
+  // TODO(user): Need to read current refresh rate to avoid
+  // redundant calls to set refresh rate during idle fall back.
+  if ((current_refresh_rate_ != refresh_rate) || (handle_idle_timeout_)) {
     error = display_intf_->SetRefreshRate(refresh_rate);
   }
 
@@ -379,11 +398,16 @@ void HWCDisplayPrimary::SetIdleTimeoutMs(uint32_t timeout_ms) {
 }
 
 static void SetLayerBuffer(const BufferInfo& output_buffer_info, LayerBuffer *output_buffer) {
-  output_buffer->width = output_buffer_info.buffer_config.width;
-  output_buffer->height = output_buffer_info.buffer_config.height;
-  output_buffer->format = output_buffer_info.buffer_config.format;
-  output_buffer->planes[0].fd = output_buffer_info.alloc_buffer_info.fd;
-  output_buffer->planes[0].stride = output_buffer_info.alloc_buffer_info.stride;
+  const BufferConfig& buffer_config = output_buffer_info.buffer_config;
+  const AllocatedBufferInfo &alloc_buffer_info = output_buffer_info.alloc_buffer_info;
+
+  output_buffer->width = alloc_buffer_info.aligned_width;
+  output_buffer->height = alloc_buffer_info.aligned_height;
+  output_buffer->unaligned_width = buffer_config.width;
+  output_buffer->unaligned_height = buffer_config.height;
+  output_buffer->format = buffer_config.format;
+  output_buffer->planes[0].fd = alloc_buffer_info.fd;
+  output_buffer->planes[0].stride = alloc_buffer_info.stride;
 }
 
 void HWCDisplayPrimary::HandleFrameOutput() {
@@ -507,6 +531,15 @@ int HWCDisplayPrimary::FrameCaptureAsync(const BufferInfo& output_buffer_info,
   DisablePartialUpdateOneFrame();
 
   return 0;
+}
+
+DisplayError HWCDisplayPrimary::SetDetailEnhancerConfig(
+                                    const DisplayDetailEnhancerData &de_data) {
+  DisplayError error = kErrorNotSupported;
+  if (display_intf_) {
+    error = display_intf_->SetDetailEnhancerData(de_data);
+  }
+  return error;
 }
 
 DisplayError HWCDisplayPrimary::ControlPartialUpdate(bool enable, uint32_t *pending) {
