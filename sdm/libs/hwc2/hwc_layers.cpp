@@ -213,7 +213,7 @@ HWC2::Error HWCLayer::SetLayerColor(hwc_color_t color) {
     return HWC2::Error::None;
   }
   layer_->solid_fill_color = GetUint32Color(color);
-  layer_->input_buffer->format = kFormatARGB8888;
+  layer_->input_buffer.format = kFormatARGB8888;
   DLOGV_IF(kTagCompManager, "[%" PRIu64 "][%" PRIu64 "] Layer color set to %x", display_id_, id_,
            layer_->solid_fill_color);
   return HWC2::Error::None;
