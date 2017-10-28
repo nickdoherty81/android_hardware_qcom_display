@@ -111,14 +111,6 @@ HWC2::Error HWCLayer::SetLayerBuffer(buffer_handle_t buffer, int32_t acquire_fen
     ion_fd_ = dup(handle->fd);
   }
 
-  LayerBuffer *layer_buffer = layer_->input_buffer;
-  layer_buffer->width = UINT32(handle->width);
-  layer_buffer->height = UINT32(handle->height);
-  layer_buffer->format = GetSDMFormat(handle->format, handle->flags);
-  if (SetMetaData(handle, layer_) != kErrorNone) {
-    return HWC2::Error::BadLayer;
-  }
-
   LayerBuffer *layer_buffer = &layer_->input_buffer;
   int aligned_width, aligned_height;
 #ifdef USE_GRALLOC1
