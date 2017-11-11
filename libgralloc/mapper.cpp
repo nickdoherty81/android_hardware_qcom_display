@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2008 The Android Open Source Project
- * Copyright (c) 2011-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2017, The Linux Foundation. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -318,6 +318,7 @@ int gralloc_perform(struct gralloc_module_t const* module,
                 int width = va_arg(args, int);
                 int height = va_arg(args, int);
                 int format = va_arg(args, int);
+                int alignedw = 0, alignedh = 0;
 
                 native_handle_t** handle = va_arg(args, native_handle_t**);
                 private_handle_t* hnd = (private_handle_t*)native_handle_create(
@@ -330,8 +331,12 @@ int gralloc_perform(struct gralloc_module_t const* module,
                   hnd->offset = offset;
                   hnd->base = uint64_t(base) + offset;
                   hnd->gpuaddr = 0;
-                  hnd->width = width;
-                  hnd->height = height;
+                  AdrenoMemInfo::getInstance().getAlignedWidthAndHeight(width,
+                          height, format, 0, alignedw, alignedh);
+                  hnd->width = alignedw;
+                  hnd->height = alignedh;
+                  hnd->unaligned_width = width;
+                  hnd->unaligned_height = height;
                   hnd->format = format;
                   *handle = (native_handle_t *)hnd;
                   res = 0;
@@ -392,8 +397,7 @@ int gralloc_perform(struct gralloc_module_t const* module,
                 int *alignedWidth = va_arg(args, int *);
                 int *alignedHeight = va_arg(args, int *);
                 int *tileEnabled = va_arg(args,int *);
-                *tileEnabled = isUBwcEnabled(format, usage) ||
-                               isMacroTileEnabled(format, usage);
+                *tileEnabled = isUBwcEnabled(format, usage);
                 AdrenoMemInfo::getInstance().getAlignedWidthAndHeight(width,
                         height, format, usage, *alignedWidth, *alignedHeight);
                 res = 0;

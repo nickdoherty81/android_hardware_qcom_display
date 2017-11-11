@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2014 - 2016, The Linux Foundation. All rights reserved.
+* Copyright (c) 2014 - 2017, The Linux Foundation. All rights reserved.
 *
 * Redistribution and use in source and binary forms, with or without modification, are permitted
 * provided that the following conditions are met:
@@ -45,6 +45,10 @@
 #define MDP_LAYER_MULTIRECT_PARALLEL_MODE 0
 #endif
 
+#ifndef MDP_LAYER_SECURE_CAMERA_SESSION
+#define MDP_LAYER_SECURE_CAMERA_SESSION 0
+#endif
+
 namespace sdm {
 class HWInfoInterface;
 
@@ -81,6 +85,7 @@ class HWDevice : public HWInterface {
   virtual DisplayError SetDisplayMode(const HWDisplayMode hw_display_mode);
   virtual DisplayError SetRefreshRate(uint32_t refresh_rate);
   virtual DisplayError SetPanelBrightness(int level);
+  virtual DisplayError CachePanelBrightness(int level);
   virtual DisplayError GetHWScanInfo(HWScanInfo *scan_info);
   virtual DisplayError GetVideoFormat(uint32_t config_index, uint32_t *video_format);
   virtual DisplayError GetMaxCEAFormat(uint32_t *max_cea_format);
@@ -100,6 +105,9 @@ class HWDevice : public HWInterface {
 
   static const int kMaxStringLength = 1024;
   static const int kNumPhysicalDisplays = 2;
+  // This indicates the number of fb devices created in the driver for all interfaces. Any addition
+  // of new fb devices should be added here.
+  static const int kFBNodeMax = 4;
 
   void DumpLayerCommit(const mdp_layer_commit &layer_commit);
   DisplayError SetFormat(const LayerBufferFormat &source, uint32_t *target);
@@ -127,6 +135,7 @@ class HWDevice : public HWInterface {
 
   bool EnableHotPlugDetection(int enable);
   ssize_t SysFsWrite(const char* file_node, const char* value, ssize_t length);
+  bool IsFBNodeConnected(int fb_node);
 
   HWResourceInfo hw_resource_;
   HWPanelInfo hw_panel_info_;
@@ -134,7 +143,8 @@ class HWDevice : public HWInterface {
   int fb_node_index_;
   const char *fb_path_;
   BufferSyncHandler *buffer_sync_handler_;
-  int device_fd_;
+  int device_fd_ = -1;
+  int stored_retire_fence = -1;
   HWDeviceType device_type_;
   mdp_layer_commit mdp_disp_commit_;
   mdp_input_layer mdp_in_layers_[kMaxSDELayers * 2];   // split panel (left + right)
@@ -147,6 +157,8 @@ class HWDevice : public HWInterface {
   HWDisplayAttributes display_attributes_ = {};
   HWMixerAttributes mixer_attributes_ = {};
   std::vector<mdp_destination_scaler_data> mdp_dest_scalar_data_;
+  int bl_level_update_commit = -1;
+  bool bl_update_commit = false;
 };
 
 }  // namespace sdm

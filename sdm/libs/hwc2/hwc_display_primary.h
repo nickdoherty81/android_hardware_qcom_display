@@ -65,6 +65,7 @@ class HWCDisplayPrimary : public HWCDisplay {
   virtual void SetFrameDumpConfig(uint32_t count, uint32_t bit_mask_layer_type);
   virtual int FrameCaptureAsync(const BufferInfo &output_buffer_info, bool post_processed);
   virtual int GetFrameCaptureStatus() { return frame_capture_status_; }
+  virtual DisplayError SetDetailEnhancerConfig(const DisplayDetailEnhancerData &de_data);
   virtual DisplayError ControlPartialUpdate(bool enable, uint32_t *pending);
 
  private:
@@ -100,6 +101,7 @@ class HWCDisplayPrimary : public HWCDisplay {
   bool dump_output_to_file_ = false;
   BufferInfo output_buffer_info_ = {};
   void *output_buffer_base_ = nullptr;
+  int default_mode_status_ = 0;
 };
 
 }  // namespace sdm

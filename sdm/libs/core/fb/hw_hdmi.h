@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2015 - 2016, The Linux Foundation. All rights reserved.
+* Copyright (c) 2015 - 2017, The Linux Foundation. All rights reserved.
 *
 * Redistribution and use in source and binary forms, with or without modification, are permitted
 * provided that the following conditions are met:
@@ -85,6 +85,7 @@ class HWHDMI : public HWDevice {
   virtual DisplayError SetDisplayAttributes(uint32_t index);
   virtual DisplayError GetConfigIndex(uint32_t mode, uint32_t *index);
   virtual DisplayError Validate(HWLayers *hw_layers);
+  virtual DisplayError Commit(HWLayers *hw_layers);
   virtual DisplayError SetS3DMode(HWS3DMode s3d_mode);
   virtual DisplayError SetRefreshRate(uint32_t refresh_rate);
 
@@ -98,10 +99,12 @@ class HWHDMI : public HWDevice {
   bool ReadResolutionFile(char *config_buffer);
   bool IsResolutionFilePresent();
   void SetSourceProductInformation(const char *node, const char *name);
-  DisplayError GetDisplayS3DSupport(uint32_t num_modes,
+  DisplayError GetDisplayS3DSupport(uint32_t index,
                                     HWDisplayAttributes *attrib);
+  DisplayError GetPanelS3DMode();
   bool IsSupportedS3DMode(HWS3DMode s3d_mode);
   void UpdateMixerAttributes();
+  DisplayError UpdateHDRMetaData(HWLayers *hw_layers);
 
   DisplayError GetDynamicFrameRateMode(uint32_t refresh_rate, uint32_t*mode,
                                        DynamicFPSData *data, uint32_t *config_index);
@@ -113,7 +116,7 @@ class HWHDMI : public HWDevice {
   uint32_t active_config_index_;
   std::map<HWS3DMode, msm_hdmi_s3d_mode> s3d_mode_sdm_to_mdp_;
   vector<HWS3DMode> supported_s3d_modes_;
-  int active_mdp_s3d_mode_ = HDMI_S3D_NONE;
+  msm_hdmi_s3d_mode active_mdp_s3d_mode_ = HDMI_S3D_NONE;
   uint32_t frame_rate_ = 0;
 };
 

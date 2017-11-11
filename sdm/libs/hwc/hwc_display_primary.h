@@ -37,6 +37,7 @@ class HWCDisplayPrimary : public HWCDisplay {
                     HWCDisplay **hwc_display);
   static void Destroy(HWCDisplay *hwc_display);
   virtual int Init();
+  virtual int Deinit();
   virtual int Prepare(hwc_display_contents_1_t *content_list);
   virtual int Commit(hwc_display_contents_1_t *content_list);
   virtual int Perform(uint32_t operation, ...);
@@ -46,6 +47,7 @@ class HWCDisplayPrimary : public HWCDisplay {
   virtual void SetFrameDumpConfig(uint32_t count, uint32_t bit_mask_layer_type);
   virtual int FrameCaptureAsync(const BufferInfo& output_buffer_info, bool post_processed);
   virtual int GetFrameCaptureStatus() { return frame_capture_status_; }
+  virtual DisplayError SetDetailEnhancerConfig(const DisplayDetailEnhancerData &de_data);
   virtual DisplayError ControlPartialUpdate(bool enable, uint32_t *pending);
 
  private:

@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2014 - 2016, The Linux Foundation. All rights reserved.
+* Copyright (c) 2014 - 2017, The Linux Foundation. All rights reserved.
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are
@@ -46,6 +46,7 @@
 #include <sync/sync.h>
 #include <profiler.h>
 #include <bitset>
+#include <vector>
 
 #include "hwc_buffer_allocator.h"
 #include "hwc_buffer_sync_handler.h"
@@ -54,6 +55,8 @@
 #include "hwc_display_null.h"
 #include "hwc_display_primary.h"
 #include "hwc_display_virtual.h"
+#include "hwc_display_external_test.h"
+#include "qd_utils.h"
 
 #define __CLASS__ "HWCSession"
 
@@ -131,11 +134,24 @@ int HWCSession::Init() {
   }
 
   DisplayError error = CoreInterface::CreateCore(HWCDebugHandler::Get(), &buffer_allocator_,
-                                                 &buffer_sync_handler_, &core_intf_);
+                                                 &buffer_sync_handler_, &socket_handler_,
+                                                 &core_intf_);
   if (error != kErrorNone) {
     DLOGE("Display core initialization failed. Error = %d", error);
     return -EINVAL;
   }
+
+  SCOPE_LOCK(uevent_locker_);
+
+  if (pthread_create(&uevent_thread_, NULL, &HWCUeventThread, this) < 0) {
+    DLOGE("Failed to start = %s, error = %s", uevent_thread_name_, strerror(errno));
+    CoreInterface::DestroyCore();
+    return -errno;
+  }
+
+  // Wait for uevent_init() to happen and let the uevent thread wait for uevents, so that hdmi
+  // connect/disconnect events won't be missed
+  uevent_locker_.Wait();
 
   // Read which display is first, and create it and store it in primary slot
   HWDisplayInterfaceInfo hw_disp_info;
@@ -147,8 +163,7 @@ int HWCSession::Init() {
       HWCDebugHandler::Get()->SetProperty("persist.sys.is_hdmi_primary", "1");
       is_hdmi_primary_ = true;
       if (hw_disp_info.is_connected) {
-        status = HWCDisplayExternal::Create(core_intf_, &hwc_procs_, qservice_,
-                                            &hwc_display_[HWC_DISPLAY_PRIMARY]);
+        status = CreateExternalDisplay(HWC_DISPLAY_PRIMARY, 0, 0, false);
         is_hdmi_yuv_ = IsDisplayYUV(HWC_DISPLAY_PRIMARY);
       } else {
         // NullDisplay simply closes all its fences, and advertizes a standard
@@ -169,20 +184,14 @@ int HWCSession::Init() {
 
   if (status) {
     CoreInterface::DestroyCore();
+    uevent_thread_exit_ = true;
+    pthread_join(uevent_thread_, NULL);
     return status;
   }
 
   color_mgr_ = HWCColorManager::CreateColorManager();
   if (!color_mgr_) {
     DLOGW("Failed to load HWCColorManager.");
-  }
-
-  if (pthread_create(&uevent_thread_, NULL, &HWCUeventThread, this) < 0) {
-    DLOGE("Failed to start = %s, error = %s", uevent_thread_name_, strerror(errno));
-    HWCDisplayPrimary::Destroy(hwc_display_[HWC_DISPLAY_PRIMARY]);
-    hwc_display_[HWC_DISPLAY_PRIMARY] = 0;
-    CoreInterface::DestroyCore();
-    return -errno;
   }
 
   connected_displays_[HWC_DISPLAY_PRIMARY] = 1;
@@ -379,6 +388,7 @@ int HWCSession::Set(hwc_composer_device_1 *device, size_t num_displays,
       int ret = hwc_session->color_mgr_->SolidFillLayersSet(displays, primary_display);
       if (ret)
         return 0;
+      hwc_session->color_mgr_->SetColorModeDetailEnhancer(primary_display);
     }
   }
 
@@ -462,6 +472,8 @@ bool HWCSession::IsDisplayYUV(int disp) {
 }
 
 int HWCSession::EventControl(hwc_composer_device_1 *device, int disp, int event, int enable) {
+  SCOPE_LOCK(locker_);
+
   if (!device) {
     return -EINVAL;
   }
@@ -645,8 +657,7 @@ int HWCSession::ConnectDisplay(int disp, hwc_display_contents_1_t *content_list)
   hwc_display_[HWC_DISPLAY_PRIMARY]->GetFrameBufferResolution(&primary_width, &primary_height);
 
   if (disp == HWC_DISPLAY_EXTERNAL) {
-    status = HWCDisplayExternal::Create(core_intf_, &hwc_procs_, primary_width, primary_height,
-                                        qservice_, false, &hwc_display_[disp]);
+    status = CreateExternalDisplay(disp, primary_width, primary_height, false);
     connected_displays_[HWC_DISPLAY_EXTERNAL] = 1;
   } else if (disp == HWC_DISPLAY_VIRTUAL) {
     status = HWCDisplayVirtual::Create(core_intf_, &hwc_procs_, primary_width, primary_height,
@@ -782,6 +793,10 @@ android::status_t HWCSession::notifyCallback(uint32_t command, const android::Pa
 
   case qService::IQService::SET_LAYER_MIXER_RESOLUTION:
     status = SetMixerResolution(input_parcel);
+    break;
+
+  case qService::IQService::GET_HDR_CAPABILITIES:
+    status = GetHdrCapabilities(input_parcel, output_parcel);
     break;
 
   default:
@@ -1191,6 +1206,51 @@ android::status_t HWCSession::SetMixerResolution(const android::Parcel *input_pa
   return 0;
 }
 
+android::status_t HWCSession::GetHdrCapabilities(const android::Parcel *input_parcel,
+                                                 android::Parcel *output_parcel) {
+  uint32_t display_id = UINT32(input_parcel->readInt32());
+  if (display_id >= HWC_NUM_DISPLAY_TYPES) {
+    DLOGE("Invalid display id = %d", display_id);
+    return -EINVAL;
+  }
+
+  if (hwc_display_[display_id] == NULL) {
+    DLOGW("Display = %d not initialized", display_id);
+    return -EINVAL;
+  }
+
+  DisplayConfigFixedInfo fixed_info = {};
+  int ret = hwc_display_[display_id]->GetDisplayFixedConfig(&fixed_info);
+  if (ret) {
+    DLOGE("Failed");
+    return ret;
+  }
+
+  if (!fixed_info.hdr_supported) {
+    DLOGI("HDR is not supported");
+    return 0;
+  }
+
+  std::vector<int32_t> supported_hdr_types;
+  // Only HDR10 supported now, in future add other supported HDR formats(HLG, DolbyVision)
+  supported_hdr_types.push_back(HAL_HDR_HDR10);
+
+  static const float kLuminanceFactor = 10000.0;
+  // luminance is expressed in the unit of 0.0001 cd/m2, convert it to 1cd/m2.
+  float max_luminance = FLOAT(fixed_info.max_luminance)/kLuminanceFactor;
+  float max_average_luminance = FLOAT(fixed_info.average_luminance)/kLuminanceFactor;
+  float min_luminance = FLOAT(fixed_info.min_luminance)/kLuminanceFactor;
+
+  if (output_parcel != nullptr) {
+    output_parcel->writeInt32Vector(supported_hdr_types);
+    output_parcel->writeFloat(max_luminance);
+    output_parcel->writeFloat(max_average_luminance);
+    output_parcel->writeFloat(min_luminance);
+  }
+
+  return 0;
+}
+
 void HWCSession::DynamicDebug(const android::Parcel *input_parcel) {
   int type = input_parcel->readInt32();
   bool enable = (input_parcel->readInt32() > 0);
@@ -1302,6 +1362,21 @@ android::status_t HWCSession::QdcmCMDHandler(const android::Parcel *input_parcel
       ret = color_mgr_->SetFrameCapture(pending_action.params,
                                         false, hwc_display_[HWC_DISPLAY_PRIMARY]);
       break;
+    case kConfigureDetailedEnhancer:
+      ret = color_mgr_->SetDetailedEnhancer(pending_action.params,
+                                            hwc_display_[HWC_DISPLAY_PRIMARY]);
+      hwc_procs_->invalidate(hwc_procs_);
+      break;
+    case kInvalidatingAndkSetPanelBrightness:
+      brightness_value = reinterpret_cast<int32_t*>(resp_payload.payload);
+      if (brightness_value == NULL) {
+        DLOGE("Brightness value is Null");
+        return -EINVAL;
+      }
+      if (HWC_DISPLAY_PRIMARY == display_id)
+        ret = hwc_display_[HWC_DISPLAY_PRIMARY]->CachePanelBrightness(*brightness_value);
+      hwc_procs_->invalidate(hwc_procs_);
+      break;
     case kNoAction:
       break;
     default:
@@ -1352,6 +1427,8 @@ void* HWCSession::HWCUeventThread(void *context) {
 void* HWCSession::HWCUeventThreadHandler() {
   static char uevent_data[PAGE_SIZE];
   int length = 0;
+
+  uevent_locker_.Lock();
   prctl(PR_SET_NAME, uevent_thread_name_, 0, 0, 0);
   setpriority(PRIO_PROCESS, 0, HAL_PRIORITY_URGENT_DISPLAY);
   android_set_rt_ioprio(0, 1);
@@ -1359,8 +1436,13 @@ void* HWCSession::HWCUeventThreadHandler() {
   if (!uevent_init()) {
     DLOGE("Failed to init uevent");
     pthread_exit(0);
+    uevent_locker_.Signal();
+    uevent_locker_.Unlock();
     return NULL;
   }
+
+  uevent_locker_.Signal();
+  uevent_locker_.Unlock();
 
   while (!uevent_thread_exit_) {
     // keep last 2 zeroes to ensure double 0 termination
@@ -1461,6 +1543,7 @@ int HWCSession::HotPlugHandler(bool connected) {
       // If we are in HDMI as primary and the primary display just got plugged in
       if (is_hdmi_primary_ && null_display) {
         uint32_t primary_width, primary_height;
+        int status = 0;
         null_display->GetFrameBufferResolution(&primary_width, &primary_height);
         delete null_display;
         hwc_display_[HWC_DISPLAY_PRIMARY] = NULL;
@@ -1469,9 +1552,7 @@ int HWCSession::HotPlugHandler(bool connected) {
         // display had. This is necessary because SurfaceFlinger does not dynamically update
         // framebuffer resolution once it reads it at bootup. So we always have to have the NULL
         // display/external display both at the bootup resolution.
-        int status = HWCDisplayExternal::Create(core_intf_, &hwc_procs_, primary_width,
-                                                primary_height, qservice_, true,
-                                                &hwc_display_[HWC_DISPLAY_PRIMARY]);
+        status = CreateExternalDisplay(HWC_DISPLAY_PRIMARY, primary_width, primary_height, true);
         if (status) {
           DLOGE("Could not create external display");
           return -1;
@@ -1632,6 +1713,24 @@ android::status_t HWCSession::GetVisibleDisplayRect(const android::Parcel *input
   output_parcel->writeInt32(visible_rect.bottom);
 
   return android::NO_ERROR;
+}
+
+int HWCSession::CreateExternalDisplay(int disp, uint32_t primary_width, uint32_t primary_height,
+                                      bool use_primary_res) {
+  uint32_t panel_bpp = 0;
+  uint32_t pattern_type = 0;
+
+  if (qdutils::isDPConnected()) {
+    qdutils::getDPTestConfig(&panel_bpp, &pattern_type);
+  }
+
+  if (panel_bpp && pattern_type) {
+    return HWCDisplayExternalTest::Create(core_intf_, &hwc_procs_, qservice_, panel_bpp,
+                                          pattern_type, &hwc_display_[disp]);
+  }
+
+  return HWCDisplayExternal::Create(core_intf_, &hwc_procs_, primary_width, primary_height,
+                                    qservice_, use_primary_res, &hwc_display_[disp]);
 }
 
 }  // namespace sdm
