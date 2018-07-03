@@ -1279,6 +1279,10 @@ void HWCSession::DynamicDebug(const android::Parcel *input_parcel) {
       HWCDebugHandler::DebugQdcm(enable, verbose_level);
       break;
 
+    case qService::IQService::DEBUG_CLIENT:
+      HWCDebugHandler::DebugClient(enable, verbose_level);
+      break;
+
     default:
       DLOGW("type = %d is not supported", type);
   }
@@ -1311,8 +1315,11 @@ android::status_t HWCSession::QdcmCMDHandler(const android::Parcel *input_parcel
                                                                      &pending_action);
   }
 
-  if (ret) {
+  if (ret || pending_action.action == kNoAction) {
     output_parcel->writeInt32(ret);  // first field in out parcel indicates return code.
+    if (pending_action.action == kNoAction) {
+      HWCColorManager::MarshallStructIntoParcel(resp_payload, output_parcel);
+    }
     req_payload.DestroyPayload();
     resp_payload.DestroyPayload();
     return ret;
